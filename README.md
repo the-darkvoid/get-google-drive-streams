@@ -10,7 +10,7 @@ To use the Python script directly
 run `pip install --upgrade google-api-python-client` to install
 
 ## How-to
-Download ([`getstreams.py`](https://raw.githubusercontent.com/cfbao/google-drive-trash-cleaner/v1.1.1rc/cleaner.py), place it in an empty local folder, and run it from command line.
+Download [`getstreams.py`](https://raw.githubusercontent.com/makkonen/get-google-drive-streams/master/getstreams.py), place it in an empty local folder, and run it from command line.
 
 By default, on first execution, `getstreams` starts from the inception of your Google Drive, finds all video files, prints their full path, then outputs a hierarchy of .strm files, each containing a link of the format `plugin://plugin.video.gdrive/?mode=video&filename=abc&title=xyz`.
 
@@ -57,4 +57,4 @@ optional arguments:
 
 ### Credit
 All the heavy lifting here was stolen shamelessly from [Chenfeng Bao's Google Drive Trash Cleaner](https://github.com/cfbao/google-drive-trash-cleaner). The original idea for that script's working mechanism is borrowed from
-[this Stack Overflow question](https://stackoverflow.com/questions/34803290/how-to-retrieve-a-recent-list-of-trashed-files-using-google-drive-api).
+[this Stack Overflow question](https://stackoverflow.com/questions/34803290/how-to-retrieve-a-recent-list-of-trashed-files-using-google-drive-api). This is all just a tiny remora stuck to the side of the [GDrive Kodi Addon](https://github.com/ddurdle/GDrive-for-KODI).
