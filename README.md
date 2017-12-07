@@ -1,10 +1,7 @@
-# Google Drive Trash Cleaner
-Unlike many other cloud storage services, Google Drive doesn't auto delete files in trash/bin even after they've been there for a long time.
-There isn't even a way to check when a file was trashed.
-Emptying the entire trash folder is just too risky.
+# Get Google Drive Streams
+A simple tool that traverses a Google Drive, finds all files of mimeType containing 'video', and outputs .strm files that direct the Kodi GDrive Addon (https://forum.kodi.tv/showthread.php?tid=177557) to play them.
 
-This script helps you safely cleanup Google Drive's trash by deleting only files that've been there for more than 30 days
-<small>(or some other period of time)</small>.
+The script works from the Google drive Changes API method, so it remembers the last files it has processed, and subsequent executions only track changes from that point forward.
 
 ## Dependencies
 To use the Python script directly
@@ -12,61 +9,52 @@ To use the Python script directly
 * package *google-api-python-client*  
 run `pip install --upgrade google-api-python-client` to install
 
-To use the Windows binary (download on the [releases](https://github.com/cfbao/google-drive-trash-cleaner/releases) page)
-* Windows update [KB2999226](https://support.microsoft.com/en-gb/help/2999226/update-for-universal-c-runtime-in-windows "Update for Universal C Runtime in Windows")
-
 ## How-to
-Download `cleaner`([.py](https://raw.githubusercontent.com/cfbao/google-drive-trash-cleaner/v1.1.1rc/cleaner.py) or
-[.exe](https://github.com/cfbao/google-drive-trash-cleaner/releases/download/v1.1.1rc/cleaner.exe)),
-place it in an empty local folder, and run it from command line.
+Download ([`getstreams.py`](https://raw.githubusercontent.com/cfbao/google-drive-trash-cleaner/v1.1.1rc/cleaner.py), place it in an empty local folder, and run it from command line.
 
-By default, `cleaner` retrieves a list of all files trashed more than 30 days ago, and prints their info on screen.
-You're asked whether you want to delete them.
-If confirmed, these files are permanently deleted from Google Drive.
+By default, on first execution, `getstreams` starts from the inception of your Google Drive, finds all video files, prints their full path, then outputs a hierarchy of .strm files, each containing a link of the format `plugin://plugin.video.gdrive/?mode=video&filename=abc&title=xyz`.
 
 ### Google authorization
-The first time you run `cleaner`, you will be prompted with a Google authorization page asking you for permission to view and manage your Google Drive files.
-Once authorized, a credential file will be saved in `.credentials\google-drive-trash-cleaner.json` under your home directory (`%UserProfile%` on Windows).
-You don't need to manually authorize `cleaner` again until you delete this credential file or revoke permission on your Google [account](https://myaccount.google.com/permissions "Apps connected to your account") page.  
-You can specify a custom location for the credential file by using the command line option `--credfile`. This is helpful if you're using multiple Google accounts with `cleaner`.
+The first time you run `getstreams`, you will be prompted with a Google authorization page asking you for permission to view and manage your Google Drive files.
+Once authorized, a credential file will be saved in `.credentials\get-google-drive-streams.json` under your home directory.
+You don't need to manually authorize `getstreams` again until you delete this credential file or revoke permission on your Google [account](https://myaccount.google.com/permissions "Apps connected to your account") page.  
+You can specify a custom location for the credential file by using the command line option `--credfile`. This is helpful if you're using multiple Google accounts with `getstreams`.
 
 ### `page_token` file
-`cleaner` finds out when your files were trashed by scanning through your Google Drive activity history.
+`getstreams` finds video files by scanning through your Google Drive activity history.
 On first run, it must start from the very beginning to ensure no files are missed, so it might take some time.
-After first run, `cleaner` saves a file named `page_token` in its own parent folder.
+After first run, `getstreams` saves a file named `page_token` in its own parent folder.
 This file contains a single number indicating an appropriate starting position in your Google Drive activity history for future scans,
-so they can be much faster than the first one. Each run of `cleaner` updates `page_token` as appropriate.  
+so they can be much faster than the first one. Each run of `getstreams` updates `page_token` as appropriate.  
 You can specify a custom location or name for the `page_token` file by using the command line option `--ptokenfile`.
 
 ### More options
-More command line options are available. You can read about them by running `cleaner --help`.
+More command line options are available. You can read about them by running `getstreams --help`.
 ```
-usage: cleaner [-h] [-a] [-v] [-d #] [-q] [-t SECS] [-m] [--noprogress]
-               [--fullpath] [--logfile PATH] [--ptokenfile PATH]
-               [--credfile PATH]
+usage: getstreams.py [-h] [-v] [-q] [-t SECS] [-m] [--noprogress] [--nopath]
+                     [--logfile PATH] [--ptokenfile PATH] [--streampath PATH]
+                     [--credfile PATH]
 
 optional arguments:
   -h, --help            show this help message and exit
-  -a, --auto            Automatically delete older trashed files in Google
-                        Drive without prompting user for confirmation
-  -v, --view            Only view which files are to be deleted without
-                        deleting them
-  -d #, --days #        Number of days files can remain in Google Drive trash
-                        before being deleted. Default is 30
+  -v, --view            Only view which files are to be parsed without
+                        creating files
   -q, --quiet           Quiet mode. Only show file count.
   -t SECS, --timeout SECS
                         Specify timeout period in seconds. Default is 300
-  -m, --mydriveonly     Only delete files in the 'My Drive' hierarchy,
-                        excluding those in 'Computers' etc.
   --noprogress          Don't show scanning progress. Useful when directing
                         output to files.
-  --fullpath            Show full path to files. May be slow for a large
-                        number of files. NOTE: the path shown is the 'current'
-                        path, may be different from the original path (when
-                        trashing) if the original parent folder has moved.
+  --nopath              Do not parse full path for files, but store them flat.
+                        Faster, but messy.
   --logfile PATH        Path to log file. Default is no logs
+  --ptokenfile PATH     Path to page token file. Default is "page_token" in
+                        getstreams.py's parent folder
+  --streampath PATH     Path to stream output directory. Default is
+                        strm/ in getstreams.py's parent folder.
+  --credfile PATH       Path to OAuth2Credentials file. Default is
+                        ~/.credentials/get-google-drive-streams.json
 ```
 
 ### Credit
-The idea for the script's working mechanism is borrowed from
+All the heavy lifting here was stolen shamelessly from [Chenfeng Bao's Google Drive Trash Cleaner](https://github.com/cfbao/google-drive-trash-cleaner). The original idea for that script's working mechanism is borrowed from
 [this Stack Overflow question](https://stackoverflow.com/questions/34803290/how-to-retrieve-a-recent-list-of-trashed-files-using-google-drive-api).

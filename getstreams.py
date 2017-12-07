@@ -1,5 +1,3 @@
-# Copyright (C) 2017 - Chenfeng Bao
-#
 # This program is free software; you can redistribute it and/or modify it 
 # under the terms of the GNU General Public License; either version 3 of 
 # the License, or (at your option) any later version.
@@ -14,6 +12,7 @@ import time
 import calendar
 import logging
 import warnings
+import urllib
 
 from apiclient import discovery
 from apiclient.errors import HttpError
@@ -23,17 +22,18 @@ from oauth2client.file import Storage
 
 if getattr(sys, 'frozen', False):
     # running in a bundle
-    CLEANER_PATH = sys.executable
+    GETSTREAMS_PATH = sys.executable
 else:
     # running as a normal Python script
-    CLEANER_PATH = os.path.realpath(__file__)
-PAGE_TOKEN_FILE = os.path.join(os.path.dirname(CLEANER_PATH), 'page_token')
-CREDENTIAL_FILE = os.path.join(os.path.expanduser('~'), '.credentials', 'google-drive-trash-cleaner.json')
+    GETSTREAMS_PATH = os.path.realpath(__file__)
+PAGE_TOKEN_FILE = os.path.join(os.path.dirname(GETSTREAMS_PATH), 'page_token')
+CREDENTIAL_FILE = os.path.join(os.path.expanduser('~'), '.credentials', 'get-google-drive-streams.json')
+STREAM_OUTPUT_PATH = os.path.join(os.path.dirname(GETSTREAMS_PATH), 'strm')
 
 CLIENT_CREDENTIAL = {
-    "client_id" : "359188752904-817oqa6dr7elufur5no09q585trpqf1l.apps.googleusercontent.com",
-    "client_secret" : "uZtsDf5vaUm8K-kZLZETmsYi",
-    "scope" : 'https://www.googleapis.com/auth/drive',
+    "client_id" : "201784684428-2ir8ukthflp7s2hhsdq96uuq8u0irlcv.apps.googleusercontent.com",
+    "client_secret" : "dsj-XVI0myaCjjDHENfnSWff",
+    "scope" : 'https://www.googleapis.com/auth/drive.readonly',
     "redirect_uri" : "urn:ietf:wg:oauth:2.0:oob",
     "token_uri" : "https://accounts.google.com/o/oauth2/token",
     "auth_uri" : "https://accounts.google.com/o/oauth2/auth",
@@ -75,10 +75,10 @@ def main():
         try:
             service = build_service(flags)
             pageToken = pageTokenFile.get()
-            deletionList, pageTokenBefore, pageTokenAfter = \
-                get_deletion_list(service, pageToken, flags)
+            mediaList, pageTokenBefore, pageTokenAfter = \
+                get_media_list(service, pageToken, flags)
             pageTokenFile.save(pageTokenBefore)
-            listEmpty = delete_old_files(service, deletionList, flags)
+            listEmpty = create_stream_files(service, mediaList, flags)
         except client.HttpAccessTokenRefreshError:
             print('Authentication error')
         except httplib2.ServerNotFoundError as e:
@@ -105,49 +105,38 @@ def parse_cmdline():
     parser.add_argument('--auth_host_port', action='store', nargs='*', default=[8080, 8090], type=int, help=argparse.SUPPRESS)
     parser.add_argument('--logging_level', action='store', default='ERROR', 
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help=argparse.SUPPRESS)
-    # flags defined by cleaner.py
-    parser.add_argument('-a', '--auto', action='store_true', 
-            help='Automatically delete older trashed files in Google Drive '
-                 'without prompting user for confirmation')
+    # flags defined by getstreams.py
     parser.add_argument('-v', '--view', action='store_true', 
-            help='Only view which files are to be deleted without deleting them')
-    parser.add_argument('-d', '--days', action='store', type=int, default=30, metavar='#',
-            help='Number of days files can remain in Google Drive trash '
-                 'before being deleted. Default is %(default)s')
+            help='Only view which files are to be parsed without creating files')
     parser.add_argument('-q', '--quiet', action='store_true', 
             help='Quiet mode. Only show file count.')
     parser.add_argument('-t', '--timeout', action='store', type=int, default=TIMEOUT_DEFAULT, metavar='SECS',
             help='Specify timeout period in seconds. Default is %(default)s')
-    parser.add_argument('-m', '--mydriveonly', action='store_true',
-            help="Only delete files in the 'My Drive' hierarchy, excluding those in 'Computers' etc.")
     parser.add_argument('--noprogress', action='store_true',
             help="Don't show scanning progress. Useful when directing output to files.")
-    parser.add_argument('--fullpath', action='store_true',
-            help="Show full path to files. May be slow for a large number of files. "
-                "NOTE: the path shown is the 'current' path, "
-                "may be different from the original path (when trashing) "
-                "if the original parent folder has moved.")
+    parser.add_argument('--nopath', action='store_true',
+            help="Do not parse full path for files, but store them flat. Faster, but messy.")
     parser.add_argument('--logfile', action='store', metavar='PATH',
             help='Path to log file. Default is no logs')
     parser.add_argument('--ptokenfile', action='store', default=PAGE_TOKEN_FILE, metavar='PATH',
             help="Path to page token file. Default is \"{}\" in %(prog)s's parent folder".
                     format(os.path.basename(PAGE_TOKEN_FILE)))
+    parser.add_argument('--streampath', action='store', default=STREAM_OUTPUT_PATH, metavar='PATH',
+            help="Path to stream output directory. Default is %(default)s")
     parser.add_argument('--credfile', action='store', default=CREDENTIAL_FILE, metavar='PATH',
             help="Path to OAuth2Credentials file. Default is %(default)s")
     flags = parser.parse_args()
-    if flags.days < 0:
-        parser.error('argument --days must be nonnegative')
     if flags.timeout < 0:
         parser.error('argument --timeout must be nonnegative')
     if flags.logfile and flags.logfile.strip():
         flags.logfile = os.path.realpath(flags.logfile)
         os.makedirs(os.path.dirname(flags.logfile),    exist_ok=True)
-    if flags.quiet and not flags.logfile:
-        flags.fullpath = False
     flags.ptokenfile = os.path.realpath(flags.ptokenfile)
     flags.credfile   = os.path.realpath(flags.credfile)
-    os.makedirs(os.path.dirname(flags.ptokenfile), exist_ok=True)
-    os.makedirs(os.path.dirname(flags.credfile),   exist_ok=True)
+    flags.streampath = os.path.realpath(flags.streampath)
+    os.makedirs(os.path.dirname(flags.ptokenfile),  exist_ok=True)
+    os.makedirs(os.path.dirname(flags.credfile),    exist_ok=True)
+    os.makedirs(os.path.realpath(flags.streampath), exist_ok=True)
     return flags
 
 def configure_logs(logPath):
@@ -187,120 +176,109 @@ def get_credentials(flags):
         print('credential file saved at\n\t' + flags.credfile)
     return credentials
 
-def get_deletion_list(service, pageToken, flags, pathFinder=None):
-    """Get list of files to be deleted and page token for future use.
+def get_media_list(service, pageToken, flags, pathFinder=None):
+    """Get list of video files and page token for future use.
     
-    deletionList, pageTokenBefore, pageTokenAfter
-        = get_deletion_list(service, pageToken, maxTrashDays, timeout)
+    mediaList, pageTokenBefore, pageTokenAfter
+        = get_media_list(service, pageToken, maxTrashDays, timeout)
     
-    Iterate through Google Drive change list to find trashed files in order 
-    of trash time. Return a list of files trashed more than maxTrashDays 
-    seconds ago and a new page token for future use.
+    Iterate through Google Drive change list to find list of files of mimeType
+    video. Return a list of files and a new page token for future use.
     
     service:        Google API service object
     pageToken:      An integer referencing a position in Drive change list.
                     Only changes made after this point will be checked. By 
-                    assumption, trashed files before this point are all 
-                    deleted.
-    deletionList:   List of trashed files to be deleted, in ascending order of 
-                    trash time. Each file is represented as a dictionary with 
+                    assumption, files before this point are already scanned.
+    mediaList:      List of media files to be made into streams.
+                    Each file is represented as a dictionary with 
                     keys {'fileId', 'time', 'name'}.
     flags:          Flags parsed from command line. Should contain the 
                     following attributes:
                     --noprogress    don't show scanning progress
-                    --fullpath      show full path
-                    --mydriveonly   restrict to my drive
                     --quiet         don't show individual file info
                     --timeout       timeout in seconds
-                    --days          maximum days in trash
     pageTokenBefore:
                     An integer representing a point in Drive change list, 
                     >= 'pageToken'.
-                    This page token is before everything in deletionList. Can 
+                    This page token is before everything in mediaList. Can 
                     be used as future pageToken no matter what.
     pageTokenAfter: An integer representing a point in Drive change list, 
                     >= 'pageToken'.
                     Can be used as future pageToken only if everything in 
-                    deletionList is deleted.
+                    mediaList is parsed.
     """
     response = execute_request(service.changes().getStartPageToken(), flags.timeout)
     latestPageToken = int(response.get('startPageToken'))
     currentTime = time.time()
-    deletionList = []
+    mediaList = []
     if not pageToken:
         pageToken = 1
     pageTokenBefore = pageToken
     pageSize = PAGE_SIZE_LARGE
     progress = ScanProgress(quiet=flags.quiet, noProgress=flags.noprogress)
-    if not pathFinder and flags.fullpath:
+    if not pathFinder and not flags.nopath:
         pathFinder = PathFinder(service)
     while pageToken:
         if latestPageToken - int(pageToken) < PAGE_SIZE_SWITCH_THRESHOLD:
             pageSize = PAGE_SIZE_SMALL
         request = service.changes().list(
                     pageToken=pageToken, includeRemoved=False,
-                    pageSize=pageSize, restrictToMyDrive=flags.mydriveonly,
+                    pageSize=pageSize,
                     fields='nextPageToken,newStartPageToken,'
-                    'changes(fileId,time,file(name,parents,explicitlyTrashed,ownedByMe))'
+                    'changes(fileId,time,file(name,parents,mimeType))'
                     )
         response = execute_request(request, flags.timeout)
         items = response.get('changes', [])
         for item in items:
-            itemTime = parse_time(item['time'])
-            if currentTime - itemTime < flags.days*24*3600:
-                progress.clear_line()
-                return deletionList, pageTokenBefore, pageToken
             progress.print_time(item['time'])
-            if item['file']['explicitlyTrashed'] and item['file']['ownedByMe']:
-                if flags.fullpath:
+            if 'video' in item['file']['mimeType']:
+                if not flags.nopath:
                     disp = pathFinder.get_path(item['fileId'], fileRes=item['file'])
                 else:
                     disp = item['file']['name']
                 progress.found(item['time'], disp)
-                deletionList.append({'fileId': item['fileId'], 'time': item['time'],
-                                        'name': disp})
+                mediaList.append({'fileId': item['fileId'], 'time': item['time'],
+                                        'fullpath': disp, 'name': item['file']['name']})
         pageToken = response.get('nextPageToken')
-        if not deletionList:
+        if not mediaList:
             pageTokenBefore = pageToken
     progress.clear_line()
-    return deletionList, pageTokenBefore, int(response.get('newStartPageToken'))
+    return mediaList, pageTokenBefore, int(response.get('newStartPageToken'))
 
-def delete_old_files(service, deletionList, flags):
-    """Print and delete files in deletionList
+def create_stream_files(service, mediaList, flags):
+    """Create stream files from items in mediaList
     
-    listEmpty = delete_old_files(service, deletionList, flags)
+    listEmpty = create_stream_files(service, mediaList, flags)
     
     service:        Google API service object
-    deletionList:   List of trashed files to be deleted, in ascending order of 
-                    trash time. Each file is represented as a dictionary with 
-                    keys {'fileId', 'time', 'name'}.
-    flags:          Flags parsed from command line arguments. In 
-                    particular, automatic deletion (no user prompt) and view-
-                    only mode (print but don't delete) are supported.
-    listEmpty:      Return True if deletionList is either empty on input or 
+    mediaList:      List of files to be parsed. Each file is represented as
+                    a dictionary with keys {'fileId', 'time', 'name'}.
+    flags:          Flags parsed from command line arguments.
+    listEmpty:      Return True if mediaList is either empty on input or 
                     emptied by this function, False otherwise.
     """
     logger = logging.getLogger('gdtc')
-    n = len(deletionList)
+    n = len(mediaList)
     if n == 0:
-        print('No files to be deleted')
+        print('No stream files to be created')
         return True
     if flags.view:
         if n == 1:
-            print('{:} file/folder trashed more than {:} days ago'.format(n, flags.days))
+            print('{:} stream to be created'.format(n))
         else:
-            print('{:} file/folder(s) trashed more than {:} days ago'.format(n, flags.days))
+            print('{:} streams to be created'.format(n))
         return False
-    if not flags.auto:
-        confirmed = ask_usr_confirmation(n)
-        if not confirmed:
-            return False
-    print('Deleting...')
-    for item in reversed(deletionList):
-        request = service.files().delete(fileId = item['fileId'])
-        execute_request(request, flags.timeout)
+    print('Creating Streams...')
+    for item in reversed(mediaList):
+        strmfile = os.path.join(flags.streampath,item['fullpath'] + '.strm')
+        os.makedirs(os.path.dirname(strmfile), exist_ok=True)
+        with open(strmfile, 'w', encoding='utf-8') as f:
+            gdriveurl = "plugin://plugin.video.gdrive/?mode=video&filename=" + \
+                                        urllib.parse.quote_plus(item['fileId']) + "&title=" \
+                                        + urllib.parse.quote_plus(item['name'])
+            f.write(str(gdriveurl))
         logger.info(item['time'] + ''.ljust(4) + item['name'])
-    print('Files successfully deleted')
+    print('Files successfully written')
     return True
 
 class ScanProgress:
@@ -316,7 +294,7 @@ class ScanProgress:
             return
         ymd = timeStr[:10]
         if ymd > self.printed:
-            print('\rScanning files trashed on ' + ymd, end='')
+            print('\rScanning files from ' + ymd, end='')
             self.printed = ymd
     
     def found(self, time, name):
@@ -326,11 +304,11 @@ class ScanProgress:
         if not self.noProgress:
             print('\r' + ''.ljust(40) + '\r', end='')
         if self.noItemYet:
-            print('Date trashed'.ljust(24) + ''.ljust(4) + 'File Name/Path')
+            print('Date added'.ljust(24) + ''.ljust(4) + 'File Name/Path')
             self.noItemYet = False
         print(time + ''.ljust(4) + name)
         if not self.noProgress:
-            print('\rScanning files trashed on ' + self.printed, end='')
+            print('\rScanning files from ' + self.printed, end='')
     
     def clear_line(self):
         print('\r' + ''.ljust(40) + '\r', end='')
@@ -377,7 +355,7 @@ class PathFinder:
         npt = None
         while True:
             request = self.service.files().list(
-                    q="'{:}' in parents and trashed=true".format(id), 
+                    q="'{:}' in parents".format(id), 
                     pageToken=npt, 
                     fields="files(id,name),nextPageToken",
                     pageSize=1000)
@@ -411,17 +389,6 @@ def execute_request(request, timeout=TIMEOUT_DEFAULT):
         else:
             return response
     raise TimeoutError
-
-def ask_usr_confirmation(n):
-    while True:
-        if n == 1:
-            usrInput = input('Confirm deleting this file/folder? (Y/N)\n')
-        else:
-            usrInput = input('Confirm deleting these {:} files/folders? (Y/N)\n'.format(n))
-        if usrInput.strip().lower() == 'y':
-            return True
-        elif usrInput.strip().lower() == 'n':
-            return False
 
 def parse_time(rfc3339):
     """parse the RfC 3339 time given by Google into Unix time"""
