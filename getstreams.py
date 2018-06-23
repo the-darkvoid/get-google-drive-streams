@@ -13,6 +13,7 @@ import calendar
 import logging
 import warnings
 import urllib
+import unicodedata
 
 from apiclient import discovery
 from apiclient.errors import HttpError
@@ -29,6 +30,7 @@ else:
 PAGE_TOKEN_FILE = os.path.join(os.path.dirname(GETSTREAMS_PATH), 'page_token')
 CREDENTIAL_FILE = os.path.join(os.path.expanduser('~'), '.credentials', 'get-google-drive-streams.json')
 STREAM_OUTPUT_PATH = os.path.join(os.path.dirname(GETSTREAMS_PATH), 'strm')
+TEAM_DRIVE_ID = None
 
 CLIENT_CREDENTIAL = {
     "client_id" : "201784684428-2ir8ukthflp7s2hhsdq96uuq8u0irlcv.apps.googleusercontent.com",
@@ -125,6 +127,8 @@ def parse_cmdline():
             help="Path to stream output directory. Default is %(default)s")
     parser.add_argument('--credfile', action='store', default=CREDENTIAL_FILE, metavar='PATH',
             help="Path to OAuth2Credentials file. Default is %(default)s")
+    parser.add_argument('--teamdrive', action='store', default=TEAM_DRIVE_ID, metavar='ID',
+            help="Google team drive ID. Default is to use My Drive")
     flags = parser.parse_args()
     if flags.timeout < 0:
         parser.error('argument --timeout must be nonnegative')
@@ -207,7 +211,8 @@ def get_media_list(service, pageToken, flags, pathFinder=None):
                     Can be used as future pageToken only if everything in 
                     mediaList is parsed.
     """
-    response = execute_request(service.changes().getStartPageToken(), flags.timeout)
+    response = execute_request(service.changes().getStartPageToken(supportsTeamDrives=True, teamDriveId=TEAM_DRIVE_ID), 
+       flags.timeout)
     latestPageToken = int(response.get('startPageToken'))
     currentTime = time.time()
     mediaList = []
@@ -224,6 +229,9 @@ def get_media_list(service, pageToken, flags, pathFinder=None):
         request = service.changes().list(
                     pageToken=pageToken, includeRemoved=False,
                     pageSize=pageSize,
+                    includeTeamDriveItems=True,
+                    supportsTeamDrives=True,
+                    teamDriveId=TEAM_DRIVE_ID,
                     fields='nextPageToken,newStartPageToken,'
                     'changes(fileId,time,file(name,parents,mimeType))'
                     )
@@ -231,7 +239,7 @@ def get_media_list(service, pageToken, flags, pathFinder=None):
         items = response.get('changes', [])
         for item in items:
             progress.print_time(item['time'])
-            if 'video' in item['file']['mimeType']:
+            if 'file' in item and 'video' in item['file']['mimeType']:
                 if not flags.nopath:
                     disp = pathFinder.get_path(item['fileId'], fileRes=item['file'])
                 else:
@@ -270,7 +278,7 @@ def create_stream_files(service, mediaList, flags):
         return False
     print('Creating Streams...')
     for item in reversed(mediaList):
-        strmfile = os.path.join(flags.streampath,item['fullpath'] + '.strm')
+        strmfile = unicodedata.normalize('NFKD', os.path.join(flags.streampath,item['fullpath'] + '.strm')).encode('ascii','ignore')
         os.makedirs(os.path.dirname(strmfile), exist_ok=True)
         with open(strmfile, 'w', encoding='utf-8') as f:
             gdriveurl = "plugin://plugin.video.gdrive/?mode=video&filename=" + \
@@ -340,7 +348,7 @@ class PathFinder:
             self.cache[id][1] += 1
             return self.cache[id][0]
         if not fileRes:
-            request = self.service.files().get(fileId=id, fields='name,parents')
+            request = self.service.files().get(fileId=id, supportsTeamDrives=True, fields='name,parents')
             fileRes = execute_request(request)
         try:
             parentId = fileRes['parents'][0]
@@ -356,7 +364,10 @@ class PathFinder:
         while True:
             request = self.service.files().list(
                     q="'{:}' in parents".format(id), 
-                    pageToken=npt, 
+                    pageToken=npt,
+                    includeTeamDriveItems=True,
+                    supportsTeamDrives=True,
+                    teamDriveId=TEAM_DRIVE_ID,
                     fields="files(id,name),nextPageToken",
                     pageSize=1000)
             response = execute_request(request)
